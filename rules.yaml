@@ -1,0 +1,464 @@
+rules:
+  # ==============================================================================
+  # 1. Паттерны, связанные с небезопасной обработкой пользовательского ввода
+  #    и внедрением HTML-кода (XSS)
+  # ==============================================================================
+
+  # --- DOM API (General JS) ---
+
+  - id: dom-insecure-html-injection
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Potential XSS: Assigning data to innerHTML/outerHTML. Ensure data is sanitized."
+    patterns:
+      - pattern-either:
+          - pattern: $EL.innerHTML = $VALUE
+          - pattern: $EL.outerHTML = $VALUE
+          - pattern: $EL.insertAdjacentHTML($POS, $VALUE)
+
+  - id: dom-insecure-document-write
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Unsafe use of document.write(). This can lead to XSS and performance issues."
+    patterns:
+      - pattern: document.write(...)
+
+  - id: dom-insecure-javascript-url
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Detected 'javascript:' URL. This is a direct XSS vector."
+    patterns:
+      - pattern-either:
+          - pattern: href="javascript:$CODE"
+          - pattern: <$TAG ... href={`javascript:${...}`} ... />
+          - pattern: <$TAG ... href={"javascript:" + ...} ... />
+
+  # --- React ---
+
+  - id: react-insecure-html-injection
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Usage of dangerouslySetInnerHTML implies XSS risk."
+    patterns:
+      - pattern-either:
+          - pattern: "<$_ dangerouslySetInnerHTML={{ __html: $VALUE }} ... />"
+          - pattern: "React.createElement($TAG, { ..., dangerouslySetInnerHTML: { __html: $VALUE }, ... })"
+
+  # --- Angular ---
+
+  - id: angular-insecure-html-injection-template
+    languages: [html]
+    severity: WARNING
+    message: "Binding to [innerHTML] or [outerHTML] creates an XSS vulnerability."
+    patterns:
+      - pattern-either:
+          - pattern: '[innerHTML]="$VALUE"'
+          - pattern: '[outerHTML]="$VALUE"'
+
+  - id: angular-insecure-bypass-security
+    languages: [typescript]
+    severity: ERROR
+    message: "Bypassing Angular's sanitizer allows XSS. Review carefully."
+    patterns:
+      - pattern-either:
+          - pattern: $SAN.bypassSecurityTrustHtml(...)
+          - pattern: $SAN.bypassSecurityTrustScript(...)
+          - pattern: $SAN.bypassSecurityTrustUrl(...)
+          - pattern: $SAN.bypassSecurityTrustResourceUrl(...)
+
+  # --- Vue ---
+
+  - id: vue-insecure-html-injection
+    languages: [html]
+    severity: WARNING
+    message: "Use of v-html creates an XSS vulnerability."
+    patterns:
+      - pattern: v-html="$VALUE"
+
+  - id: vue-insecure-html-injection-domprops
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Directly setting innerHTML via domProps in Vue render functions."
+    patterns:
+      - pattern: |
+          domProps: { ..., innerHTML: $VALUE, ... }
+
+  - id: vue-insecure-javascript-url
+    languages: [html]
+    severity: ERROR
+    message: "Dynamic binding of 'javascript:' to href allows XSS."
+    patterns:
+      - pattern-either:
+          - pattern: ':href="''javascript:'' + $VAL"'
+          - pattern: 'v-bind:href="''javascript:'' + $VAL"'
+
+  # --- Svelte ---
+
+  - id: svelte-insecure-html-injection
+    languages: [generic]
+    severity: WARNING
+    message: "{@html ...} tag bypasses Svelte's auto-escaping, leading to XSS."
+    pattern-regex: '\{@html\s+[^}]+\}'
+
+  # ==============================================================================
+  # 2. Паттерны, связанные с небезопасной логикой рендеринга и работой с DOM
+  # ==============================================================================
+
+  # --- DOM API (General JS) ---
+
+  - id: dom-insecure-code-execution-eval
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Use of eval() or new Function() allows arbitrary code execution."
+    patterns:
+      - pattern-either:
+          - pattern: eval(...)
+          - pattern: new Function(...)
+          - pattern: setTimeout("$CODE", $TIME)
+
+  - id: dom-insecure-dom-clobbering
+    languages: [javascript, typescript]
+    severity: INFO
+    message: "Accessing window/document properties dynamically can lead to DOM Clobbering attacks."
+    patterns:
+      - pattern-either:
+          - pattern: window[$VAR]
+          - pattern: document[$VAR]
+          - pattern: document.forms[$VAR]
+
+  # --- React ---
+
+  - id: react-finddomnode-usage
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "ReactDOM.findDOMNode is deprecated and bypasses React encapsulation."
+    patterns:
+      - pattern: ReactDOM.findDOMNode(...)
+
+  - id: react-component-inside-component
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Do not define components inside other components. It causes remounts on every render."
+    patterns:
+      - pattern: |
+          const $PARENT = (...) => {
+            ...
+            const $CHILD = (...) => { ... return <$TAG ... /> }
+            ...
+          }
+      - pattern-not: |
+          const $PARENT = (...) => {
+            ...
+            const $CHILD = (...) => { ... return ... }
+            ...
+          }
+
+  - id: react-hooks-conditional
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "React Hooks must be called unconditionally (not inside loops or if-statements)."
+    patterns:
+      - pattern-either:
+          - pattern: |
+              if (...) { ... useEffect(...) ... }
+          - pattern: |
+              if (...) { ... useState(...) ... }
+          - pattern: |
+              for (...) { ... useEffect(...) ... }
+
+  # --- Angular ---
+
+  - id: angular-insecure-renderer-abuse
+    languages: [typescript]
+    severity: WARNING
+    message: "Manually setting properties/attributes via Renderer2. Use binding instead."
+    patterns:
+      - pattern-either:
+          - pattern: $R.setProperty(...)
+          - pattern: $R.setAttribute(...)
+
+  - id: angular-performance-function-in-template
+    languages: [html]
+    severity: INFO
+    message: "Function calls in templates are executed on every change detection cycle. Use pure pipes or computed values."
+    patterns:
+      - pattern-regex: '\{\{\s*[a-zA-Z0-9_]+\(.*\)\s*\}\}'
+
+  # --- Vue ---
+
+  - id: vue-insecure-dynamic-component
+    languages: [html]
+    severity: INFO
+    message: "Dynamic component rendering with :is needs validation of the component name."
+    patterns:
+      - pattern: '<component :is="$VALUE" ... />'
+
+  - id: vue-no-v-if-with-v-for
+    languages: [html]
+    severity: WARNING
+    message: "Do not use v-if and v-for on the same element. It causes logic errors and performance issues."
+    patterns:
+      - pattern: '<$TAG ... v-if="$COND" ... v-for="$ITEM in $LIST" ...>'
+
+  - id: vue-no-v-for-without-key
+    languages: [html]
+    severity: WARNING
+    message: "v-for requires a :key attribute to maintain component state and performance."
+    patterns:
+      - pattern: '<$TAG ... v-for="$ITEM in $LIST" ...>'
+      - pattern-not: '<$TAG ... :key="$KEY" ...>'
+      - pattern-not: '<$TAG ... v-bind:key="$KEY" ...>'
+
+  # --- Svelte ---
+
+  - id: svelte-insecure-dynamic-component
+    languages: [html, generic]
+    severity: INFO
+    message: "Dynamic <svelte:component> with user input can lead to unexpected behavior."
+    patterns:
+      - pattern: '<svelte:component this={$VALUE} ... />'
+
+  # ==============================================================================
+  # 3. Паттерны, связанные с управлением состоянием и некорректной работой с данными
+  # ==============================================================================
+
+  # --- DOM API (General JS) ---
+
+  - id: dom-insecure-storage-sensitive-data
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Potential storage of sensitive data (token, password, key) in localStorage/sessionStorage."
+    patterns:
+      - pattern-either:
+          - pattern: localStorage.setItem($KEY, ...)
+          - pattern: sessionStorage.setItem($KEY, ...)
+      - metavariable-regex:
+          metavariable: $KEY
+          regex: "(?i).*(token|auth|password|secret|key).*"
+
+  - id: dom-insecure-math-random
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Math.random() is not cryptographically secure. Do not use for security tokens."
+    patterns:
+      - pattern: Math.random()
+
+  - id: dom-hardcoded-secrets
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Possible hardcoded secret (API key or token) detected."
+    patterns:
+      - pattern-regex: "(?i)(api_key|auth_token|client_secret|access_token)\\s*[:=]\\s*['\"][a-zA-Z0-9_\\-]{20,}['\"]"
+
+  # --- React ---
+
+  - id: react-insecure-sensitive-state
+    languages: [javascript, typescript]
+    severity: INFO
+    message: "Storing sensitive data in component state. Ensure it is cleared on unmount."
+    patterns:
+      - pattern: useState($VAL)
+      - metavariable-regex:
+          metavariable: $VAL
+          regex: ".*(token|password).*"
+
+  - id: react-props-in-initial-state
+    languages: [javascript, typescript]
+    severity: INFO
+    message: "Initializing state from props ignores prop updates. Use useEffect or derive state during render."
+    patterns:
+      - pattern-either:
+          - pattern: useState(props.$VAL)
+          - pattern: useState($PROPS.$VAL)
+
+  - id: react-useeffect-missing-deps
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "useEffect without a dependency array runs on every render. This can cause performance issues or infinite loops."
+    patterns:
+      - pattern: useEffect(...)
+      - pattern-not: useEffect(..., [...])
+      - pattern-not: useEffect(..., $ANY)
+
+  # --- Angular ---
+
+  - id: angular-nested-subscribe
+    languages: [typescript]
+    severity: WARNING
+    message: "Nested subscribe() calls lead to memory leaks and unmanageable code. Use switchMap/mergeMap instead."
+    patterns:
+      - pattern: |
+          $OBS1.subscribe(..., () => {
+            ...
+            $OBS2.subscribe(...)
+            ...
+          })
+
+  # --- Vue ---
+
+  - id: vue-insecure-strict-mode-off
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Vuex store initialized without strict mode. State mutations outside mutations handlers allowed."
+    patterns:
+      - pattern: "new Vuex.Store({ ..., strict: false, ... })"
+
+  - id: vue-no-prop-mutation
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Avoid mutating props directly. Use data or computed properties instead."
+    patterns:
+      - pattern: "this.$props.$VAL = $NEWVAL"
+
+  # --- Svelte ---
+
+  - id: svelte-shared-state-ssr
+    languages: [html, generic]
+    severity: ERROR
+    message: "Variables in <script context='module'> are shared between all requests on the server (Data Leak). Move state to normal <script>."
+    patterns:
+      - pattern: |
+          <script context="module">
+            ...
+            let $VAR = ...;
+            ...
+          </script>
+      - pattern-not: |
+          <script context="module">
+            ...
+            const $VAR = ...; # Const is safe
+            ...
+          </script>
+
+  - id: svelte-store-mutation-in-subscribe
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Updating a store inside a subscribe callback is an anti-pattern. Use derived stores instead."
+    patterns:
+      - pattern: |
+          $STORE.subscribe($VAL => {
+            ...
+            $OTHER.set(...)
+            ...
+          })
+
+  # ==============================================================================
+  # 4. Паттерны, связанные с небезопасной маршрутизацией
+  # ==============================================================================
+
+  # --- DOM API (General JS) ---
+
+  - id: dom-open-redirect
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Potential Open Redirect vulnerability. Validating input before assignment is required."
+    patterns:
+      - pattern-either:
+          - pattern: window.location = $VAL
+          - pattern: window.location.href = $VAL
+          - pattern: window.location.assign($VAL)
+          - pattern: window.location.replace($VAL)
+      - pattern-not: window.location = "..."
+
+  # --- React ---
+
+  - id: react-reverse-tabnabbing
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Target='_blank' without rel='noopener noreferrer' allows Reverse Tabnabbing attacks."
+    patterns:
+      - pattern: <a ... target="_blank" ...>
+      - pattern-not: <a ... rel="noopener noreferrer" ...>
+      - pattern-not: <a ... rel="noreferrer noopener" ...>
+
+  # --- Vue ---
+
+  - id: vue-reverse-tabnabbing
+    languages: [html]
+    severity: WARNING
+    message: "Links with target='_blank' must have rel='noopener noreferrer' to prevent Tabnabbing."
+    patterns:
+      - pattern-either:
+          - pattern: '<a ... target="_blank" ...>'
+          - pattern: '<a ... :target="''_blank''" ...>'
+      - pattern-not: '<a ... rel="noopener noreferrer" ...>'
+      - pattern-not: '<a ... rel="noreferrer noopener" ...>'
+
+  # --- Angular ---
+
+  - id: angular-router-redirect
+    languages: [typescript]
+    severity: WARNING
+    message: "Dynamic navigation using Router. Validate the target URL."
+    patterns:
+      - pattern: $ROUTER.navigateByUrl($VAL)
+      - pattern-not: $ROUTER.navigateByUrl("...")
+
+  # ==============================================================================
+  # 5. Паттерны, связанные с использованием глобальных переменных
+  # ==============================================================================
+
+  # --- Global Scope Pollution ---
+
+  - id: dom-insecure-global-assignment
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Writing to global object (window/globalThis). This causes namespace pollution and potential conflicts."
+    patterns:
+      - pattern-either:
+          - pattern: window.$VAR = $VAL
+          - pattern: globalThis.$VAR = $VAL
+          - pattern: self.$VAR = $VAL
+
+  - id: dom-prototype-pollution-assignment
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Potential Prototype Pollution assignment detected."
+    patterns:
+      - pattern-either:
+          - pattern: $OBJ['__proto__'] = ...
+          - pattern: $OBJ.__proto__ = ...
+          - pattern: $OBJ.constructor.prototype = ...
+
+  # --- Angular ---
+
+  - id: angular-no-view-encapsulation
+    languages: [typescript]
+    severity: INFO
+    message: "Using ViewEncapsulation.None makes styles global, which can break other components or introduce security risks."
+    patterns:
+      - pattern: "encapsulation: ViewEncapsulation.None"
+
+  # ==============================================================================
+  # 6. Паттерны, связанные с использованием внешних библиотек
+  # ==============================================================================
+
+  # --- jQuery / Legacy ---
+
+  - id: jquery-insecure-html
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "jQuery methods .html(), .append(), .prepend() can execute scripts (XSS)."
+    patterns:
+      - pattern-either:
+          - pattern: $EL.html($VAL)
+          - pattern: $EL.append($VAL)
+          - pattern: $EL.prepend($VAL)
+          - pattern: $EL.wrap($VAL)
+
+  - id: jquery-insecure-selector
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Passing user input to jQuery selector $() can lead to XSS."
+    patterns:
+      - pattern: $($VAL)
+      - pattern-not: $("...")
+
+  # --- Third-party eval ---
+
+  - id: lodash-insecure-template
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Lodash template() allows arbitrary code execution via the 'variable' option."
+    patterns:
+      - pattern: "_.template(..., { variable: ... })"
