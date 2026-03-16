@@ -95,7 +95,7 @@ rules:
   # --- Svelte ---
 
   - id: svelte-insecure-html-injection
-    languages: [generic]
+    languages: [html]
     severity: WARNING
     message: "{@html ...} tag bypasses Svelte's auto-escaping, leading to XSS."
     pattern-regex: '\{@html\s+[^}]+\}'
@@ -158,24 +158,13 @@ rules:
     severity: ERROR
     message: "React Hooks must be called unconditionally (not inside loops or if-statements)."
     patterns:
-      - pattern-either:
-          - pattern: |
-              if (...) { ... useEffect(...) ... }
-          - pattern: |
-              if (...) { ... useState(...) ... }
-          - pattern: |
-              for (...) { ... useEffect(...) ... }
+      - pattern: |
+          function $COMPONENT(...) {
+            $BODY
+          }
+      - pattern-regex: 'if\s*\(.*\)\s*\{\s*use(State|Effect)\('
 
   # --- Angular ---
-
-  - id: angular-insecure-renderer-abuse
-    languages: [typescript]
-    severity: WARNING
-    message: "Manually setting properties/attributes via Renderer2. Use binding instead."
-    patterns:
-      - pattern-either:
-          - pattern: $R.setProperty(...)
-          - pattern: $R.setAttribute(...)
 
   - id: angular-performance-function-in-template
     languages: [html]
@@ -212,7 +201,7 @@ rules:
   # --- Svelte ---
 
   - id: svelte-insecure-dynamic-component
-    languages: [html, generic]
+    languages: [html]
     severity: INFO
     message: "Dynamic <svelte:component> with user input can lead to unexpected behavior."
     patterns:
@@ -235,13 +224,6 @@ rules:
       - metavariable-regex:
           metavariable: $KEY
           regex: "(?i).*(token|auth|password|secret|key).*"
-
-  - id: dom-insecure-math-random
-    languages: [javascript, typescript]
-    severity: WARNING
-    message: "Math.random() is not cryptographically secure. Do not use for security tokens."
-    patterns:
-      - pattern: Math.random()
 
   - id: dom-hardcoded-secrets
     languages: [javascript, typescript]
@@ -304,7 +286,7 @@ rules:
       - pattern: "new Vuex.Store({ ..., strict: false, ... })"
 
   - id: vue-no-prop-mutation
-    languages: [javascript, typescript]
+    languages: [javascript, typescript, html]
     severity: WARNING
     message: "Avoid mutating props directly. Use data or computed properties instead."
     patterns:
@@ -313,7 +295,7 @@ rules:
   # --- Svelte ---
 
   - id: svelte-shared-state-ssr
-    languages: [html, generic]
+    languages: [html]
     severity: ERROR
     message: "Variables in <script context='module'> are shared between all requests on the server (Data Leak). Move state to normal <script>."
     patterns:
@@ -331,16 +313,10 @@ rules:
           </script>
 
   - id: svelte-store-mutation-in-subscribe
-    languages: [javascript, typescript]
+    languages: [javascript, typescript, html]
     severity: WARNING
     message: "Updating a store inside a subscribe callback is an anti-pattern. Use derived stores instead."
-    patterns:
-      - pattern: |
-          $STORE.subscribe($VAL => {
-            ...
-            $OTHER.set(...)
-            ...
-          })
+    pattern-regex: '\.subscribe\s*\(\s*\$[A-Z]+\s*=>.*\$[A-Z]+\.set\s*\('
 
   # ==============================================================================
   # 4. Паттерны, связанные с небезопасной маршрутизацией
@@ -367,9 +343,9 @@ rules:
     severity: WARNING
     message: "Target='_blank' without rel='noopener noreferrer' allows Reverse Tabnabbing attacks."
     patterns:
-      - pattern: <a ... target="_blank" ...>
-      - pattern-not: <a ... rel="noopener noreferrer" ...>
-      - pattern-not: <a ... rel="noreferrer noopener" ...>
+      - pattern: <a target="_blank" />
+      - pattern-not: <a rel="noopener noreferrer" />
+      - pattern-not: <a rel="noreferrer noopener" />
 
   # --- Vue ---
 
@@ -400,16 +376,6 @@ rules:
 
   # --- Global Scope Pollution ---
 
-  - id: dom-insecure-global-assignment
-    languages: [javascript, typescript]
-    severity: WARNING
-    message: "Writing to global object (window/globalThis). This causes namespace pollution and potential conflicts."
-    patterns:
-      - pattern-either:
-          - pattern: window.$VAR = $VAL
-          - pattern: globalThis.$VAR = $VAL
-          - pattern: self.$VAR = $VAL
-
   - id: dom-prototype-pollution-assignment
     languages: [javascript, typescript]
     severity: ERROR
@@ -420,39 +386,9 @@ rules:
           - pattern: $OBJ.__proto__ = ...
           - pattern: $OBJ.constructor.prototype = ...
 
-  # --- Angular ---
-
-  - id: angular-no-view-encapsulation
-    languages: [typescript]
-    severity: INFO
-    message: "Using ViewEncapsulation.None makes styles global, which can break other components or introduce security risks."
-    patterns:
-      - pattern: "encapsulation: ViewEncapsulation.None"
-
   # ==============================================================================
   # 6. Паттерны, связанные с использованием внешних библиотек
   # ==============================================================================
-
-  # --- jQuery / Legacy ---
-
-  - id: jquery-insecure-html
-    languages: [javascript, typescript]
-    severity: WARNING
-    message: "jQuery methods .html(), .append(), .prepend() can execute scripts (XSS)."
-    patterns:
-      - pattern-either:
-          - pattern: $EL.html($VAL)
-          - pattern: $EL.append($VAL)
-          - pattern: $EL.prepend($VAL)
-          - pattern: $EL.wrap($VAL)
-
-  - id: jquery-insecure-selector
-    languages: [javascript, typescript]
-    severity: WARNING
-    message: "Passing user input to jQuery selector $() can lead to XSS."
-    patterns:
-      - pattern: $($VAL)
-      - pattern-not: $("...")
 
   # --- Third-party eval ---
 
