@@ -1,3 +1,171 @@
+x-js-propagators: &js_propagators 
+  # --- Array transformations ---
+  - pattern: $DST = $SRC.map(...)
+    from: $SRC
+    to: $DST
+  - pattern: $DST = $SRC.filter(...)
+    from: $SRC
+    to: $DST
+  - pattern: $DST = $SRC.reduce(...)
+    from: $SRC
+    to: $DST
+  - pattern: $DST = $SRC.slice(...)
+    from: $SRC
+    to: $DST
+  - pattern: $DST = $SRC.concat($A)
+    from: $SRC
+    to: $DST
+  - pattern: $DST = $A.concat($SRC)
+    from: $SRC
+    to: $DST
+  - pattern: $DST = [ ...$SRC ]
+    from: $SRC
+    to: $DST
+  # --- String transformations ---
+  - pattern: $DST = $SRC.trim()
+    from: $SRC
+    to: $DST
+  - pattern: $DST = $SRC.replace(...)
+    from: $SRC
+    to: $DST
+  - pattern: $DST = $SRC.replaceAll(...)
+    from: $SRC
+    to: $DST
+  - pattern: $DST = $SRC.toLowerCase()
+    from: $SRC
+    to: $DST
+  - pattern: $DST = $SRC.toUpperCase()
+    from: $SRC
+    to: $DST
+  - pattern: $DST = String($SRC)
+    from: $SRC
+    to: $DST
+  - pattern: $DST = JSON.parse($SRC)
+    from: $SRC
+    to: $DST
+  - pattern: $DST = JSON.stringify($SRC)
+    from: $SRC
+    to: $DST
+  # --- Object transformations ---
+  - pattern: $DST = Object.assign($DST, $SRC)
+    from: $SRC
+    to: $DST
+  - pattern: Object.assign($DST, $SRC)
+    from: $SRC
+    to: $DST
+  - pattern: $DST = { ...$SRC }
+    from: $SRC
+    to: $DST
+  # --- Encoding / decoding ---
+  - pattern: $DST = decodeURIComponent($SRC)
+    from: $SRC
+    to: $DST
+  - pattern: $DST = encodeURIComponent($SRC)
+    from: $SRC
+    to: $DST
+  # --- Template / concat ---
+  - pattern: $DST = `...${ $SRC }...`
+    from: $SRC
+    to: $DST
+  - pattern: $DST = $A + $SRC
+    from: $SRC
+    to: $DST
+  - pattern: $DST = $SRC + $A
+    from: $SRC
+    to: $DST
+
+x-js-sources-obj: &js_sources_obj
+  pattern-either:
+    - pattern: window.location.search
+    - pattern: window.location.hash
+    - pattern: window.location.pathname
+    - pattern: window.location.href
+    - pattern: document.location.search
+    - pattern: document.location.hash
+    - pattern: document.location.pathname
+    - pattern: document.location.href
+    - pattern: document.referrer
+    - pattern: document.URL
+    - pattern: window.name
+    - pattern: history.state
+    - pattern: new URLSearchParams(...)
+    - pattern: req.body
+    - pattern: req.query
+    - pattern: req.params
+    - pattern: request.body
+    - pattern: request.query
+    - pattern: request.params
+    - pattern: ctx.request.body
+    - pattern: ctx.query
+    - pattern: event.body
+    - pattern: event.queryStringParameters
+    - patterns:
+        - pattern: $PARAMS.get(...)
+        - pattern-inside: |
+            $PARAMS = new URLSearchParams(...);
+            ...
+    - patterns:
+        - pattern: $EVT.data
+        - pattern-inside: |
+            $WIN.addEventListener('message', function($EVT) { ... })
+    - patterns:
+        - pattern: $EVT.data
+        - pattern-inside: |
+            $WIN.addEventListener('message', ($EVT) => { ... })
+
+x-js-sources: &js_sources
+  - *js_sources_obj
+
+x-react-sources: &react_sources
+  - *js_sources_obj
+  - pattern-either:
+      - pattern: useSearchParams().get(...)
+      - pattern: $REQ.nextUrl.searchParams.get(...)
+  - patterns:
+      - pattern-inside: |
+          $ROUTER = useRouter();
+          ...
+      - pattern: $ROUTER.query
+  - patterns:
+      - pattern-inside: |
+          export default function $COMP({ searchParams }: $TYPE) { ... }
+      - pattern: searchParams
+  - patterns:
+      - pattern-inside: |
+          export default async function $COMP({ searchParams }: $TYPE) { ... }
+      - pattern: searchParams
+  - patterns:
+      - pattern-inside: |
+          export async function getServerSideProps($CTX) { ... }
+      - pattern: $CTX.query
+
+x-angular-sources: &angular_sources
+  - *js_sources_obj
+  - pattern-either:
+      - pattern: $ROUTE.snapshot.queryParams
+      - pattern: $ROUTE.snapshot.params
+      - pattern: $ROUTE.snapshot.fragment
+      - pattern: $ROUTE.snapshot.data
+      - pattern: $ROUTE.snapshot.paramMap.get(...)
+      - pattern: $ROUTE.snapshot.queryParamMap.get(...)
+  - patterns:
+      - pattern: $PARAMS
+      - pattern-inside: |
+          $ROUTE.queryParams.subscribe(($PARAMS) => { ... })
+
+x-vue-sources: &vue_sources
+  - *js_sources_obj
+  - pattern-either:
+      - pattern: this.$route.query
+      - pattern: this.$route.params
+      - pattern: this.$route.hash
+      - pattern: useRoute().query
+      - pattern: useRoute().params
+      - pattern: useRoute().hash
+      - pattern: getQuery($REQ)
+      - pattern: readBody($REQ)
+      - pattern: getRouterParam($REQ, ...)
+
 rules:
   # ==============================================================================
   # 1. Паттерны, связанные с небезопасной обработкой пользовательского ввода
@@ -6,99 +174,413 @@ rules:
 
   # --- DOM API (General JS) ---
 
-  - id: dom-insecure-html-injection
+  - id: dom-insecure-html-injection-taint
+    mode: taint
     languages: [javascript, typescript]
-    severity: WARNING
-    message: "Potential XSS: Assigning data to innerHTML/outerHTML. Ensure data is sanitized."
-    patterns:
+    severity: ERROR
+    message: >-
+      DOM XSS: Untrusted user input is flowing into a DOM insertion point 
+      (innerHTML, outerHTML, insertAdjacentHTML). This allows execution of arbitrary scripts. 
+      Ensure data is properly sanitized using DOMPurify or safely cast to a number/boolean.
+    options:
+      interfile: true
+      taint_assume_safe_indexes: true
+    pattern-sources: *js_sources
+    pattern-propagators: *js_propagators
+    pattern-sinks:
       - pattern-either:
-          - pattern: $EL.innerHTML = $VALUE
-          - pattern: $EL.outerHTML = $VALUE
-          - pattern: $EL.insertAdjacentHTML($POS, $VALUE)
+          - pattern: $EL.innerHTML = $SINK
+          - pattern: $EL.outerHTML = $SINK
+          - pattern: $EL.innerHTML += $SINK
+          - pattern: $EL.outerHTML += $SINK
+          - pattern: document.body.innerHTML = $SINK
+          - pattern: document.body.outerHTML = $SINK
+          - pattern: $EL.srcdoc = $SINK
+          - patterns:
+              - pattern: $EL.insertAdjacentHTML($POS, $SINK)
+              - focus-metavariable: $SINK
+          - patterns:
+              - pattern: $RANGE.createContextualFragment($SINK)
+              - focus-metavariable: $SINK
+          - patterns:
+              - pattern: $JQ.html($SINK)
+              - focus-metavariable: $SINK
+          - patterns:
+              - pattern: $JQ.append($SINK)
+              - focus-metavariable: $SINK
+          - patterns:
+              - pattern: $JQ.prepend($SINK)
+              - focus-metavariable: $SINK
+          - patterns:
+              - pattern: $JQ.after($SINK)
+              - focus-metavariable: $SINK
+          - patterns:
+              - pattern: $JQ.before($SINK)
+              - focus-metavariable: $SINK
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: DOMPurify.sanitize(...)
+          - pattern: sanitizeHtml(...)
+          - pattern: parseInt(...)
+          - pattern: parseFloat(...)
+          - pattern: Number(...)
+          - pattern: Boolean(...)
+          - pattern: |
+              if (typeof $SINK === 'number') { ... }
+          - pattern: |
+              if (typeof $SINK === 'boolean') { ... }
 
-  - id: dom-insecure-document-write
+  - id: dom-insecure-document-write-taint
+    mode: taint
     languages: [javascript, typescript]
-    severity: WARNING
-    message: "Unsafe use of document.write(). This can lead to XSS and performance issues."
-    patterns:
-      - pattern: document.write(...)
+    severity: ERROR
+    message: >-
+      DOM XSS: Untrusted user input is passed directly to document.write() or document.writeln(). 
+      This allows execution of arbitrary scripts and alters the document structure. 
+      Refactor to use safe DOM manipulation methods.
+    options:
+      interfile: true
+      taint_assume_safe_indexes: true
+    pattern-sources: *js_sources
+    pattern-propagators: *js_propagators
+    pattern-sinks:
+      - pattern-either:
+          - pattern: document.write(`...${$SINK}...`)
+          - pattern: document.writeln(`...${$SINK}...`)
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: DOMPurify.sanitize(...)
+          - pattern: sanitizeHtml(...)
+          - pattern: parseInt(...)
+          - pattern: parseFloat(...)
+          - pattern: Number(...)
+          - pattern: |
+              if (typeof $SINK === 'number') { ... }
 
   - id: dom-insecure-javascript-url
     languages: [javascript, typescript]
     severity: ERROR
-    message: "Detected 'javascript:' URL. This is a direct XSS vector."
+    message: >-
+      XSS Vector: Detected 'javascript:' URI scheme usage. 
+      If any part of the string is user-controlled, it leads to Cross-Site Scripting. 
+      Refactor to use event handlers (onClick, addEventListener) instead.
     patterns:
       - pattern-either:
-          - pattern: href="javascript:$CODE"
-          - pattern: <$TAG ... href={`javascript:${...}`} ... />
-          - pattern: <$TAG ... href={"javascript:" + ...} ... />
+          - pattern: <$TAG ... href={`javascript:${$VAL}`} ... />
+          - pattern: <$TAG ... href={"javascript:" + $VAL} ... />
+          - pattern: <$TAG ... href={'javascript:' + $VAL} ... />
+          - pattern: <$TAG ... href="javascript:$CODE" ... />
+          - pattern: <$TAG ... href='javascript:$CODE' ... />
+          - pattern: <$TAG ... href={"javascript:$CODE"} ... />
+          - pattern-regex: '<[a-zA-Z0-9_]+\s+[^>]*href=["'']\s*javascript:.*["''][^>]*>'
+          - pattern: $EL.href = `javascript:${$VAL}`
+          - pattern: $EL.href = "javascript:" + $VAL
+          - pattern: $EL.href = 'javascript:' + $VAL
+          - pattern: $EL.setAttribute("href", `javascript:${$VAL}`)
+          - pattern: $EL.setAttribute('href', `javascript:${$VAL}`)
+          - pattern: $EL.setAttribute("href", "javascript:" + $VAL)
+          - pattern: $EL.setAttribute('href', 'javascript:' + $VAL)
+          - pattern: window.open("javascript:" + $VAL, ...)
+          - pattern: window.open(`javascript:${$VAL}`, ...)
+          - pattern: window.location = "javascript:" + $VAL
+          - pattern: window.location.href = `javascript:${$VAL}`
 
   # --- React ---
 
-  - id: react-insecure-html-injection
+  - id: react-insecure-html-injection-taint
+    mode: taint
     languages: [javascript, typescript]
-    severity: WARNING
-    message: "Usage of dangerouslySetInnerHTML implies XSS risk."
-    patterns:
+    severity: ERROR
+    message: >-
+      React XSS: Untrusted user input is flowing into 'dangerouslySetInnerHTML'. 
+      This completely bypasses React's built-in auto-escaping and allows script injection. 
+      Ensure data is properly sanitized using DOMPurify before rendering.
+    options:
+      interfile: true
+      taint_assume_safe_indexes: true
+    pattern-sources: *js_sources
+    pattern-propagators: *js_propagators
+    pattern-sinks:
       - pattern-either:
-          - pattern: "<$_ dangerouslySetInnerHTML={{ __html: $VALUE }} ... />"
-          - pattern: "React.createElement($TAG, { ..., dangerouslySetInnerHTML: { __html: $VALUE }, ... })"
+          - pattern: |
+              <$_ dangerouslySetInnerHTML={{ __html: $SINK }} ... />
+          - pattern: |
+              <$_ dangerouslySetInnerHTML={{ "__html": $SINK }} ... />
+          - pattern: |
+              <$_ dangerouslySetInnerHTML={{ '__html': $SINK }} ... />
+          - pattern: |
+              React.createElement($TAG, { ..., dangerouslySetInnerHTML: { __html: $SINK }, ... }, ...)
+          - pattern: |
+              React.createElement($TAG, { ..., "dangerouslySetInnerHTML": { "__html": $SINK }, ... }, ...)
+          - patterns:
+              - pattern-inside: |
+                  $OBJ = { __html: $SINK };
+                  ...
+              - pattern: <$_ dangerouslySetInnerHTML={$OBJ} ... />
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: DOMPurify.sanitize(...)
+          - pattern: sanitizeHtml(...)
+          - pattern: parseInt(...)
+          - pattern: parseFloat(...)
+          - pattern: Number(...)
+          - pattern: |
+              if (typeof $SINK === 'number') { ... }
+
+  - id: react-insecure-href-taint
+    mode: taint
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      React XSS: Untrusted user data is assigned directly to an 'href' attribute. 
+      If the data contains a 'javascript:' URI and a user clicks the link, arbitrary 
+      JavaScript will execute. Ensure the URL is validated to start with 'http://', 'https://', or '/'.
+    options:
+      interfile: true
+      taint_assume_safe_indexes: true
+    pattern-sources: *js_sources
+    pattern-propagators: *js_propagators
+    pattern-sinks:
+      - pattern-either:
+          - pattern: <$TAG ... href={$SINK} ... />
+          - pattern: <$TAG ... href={`...${$SINK}...`} ... />
+          - pattern: <$TAG ... href={"..." + $SINK} ... />
+          - pattern: |
+              React.createElement("a", { ..., href: $SINK, ... }, ...)
+          - pattern: |
+              React.createElement("area", { ..., href: $SINK, ... }, ...)
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: |
+              if ($SINK.startsWith('http')) { ... }
+          - pattern: |
+              if ($SINK.startsWith('/')) { ... }
+          - pattern: |
+              if ($SINK.startsWith('./')) { ... }
+          - pattern: |
+              if ($SINK.indexOf('http') === 0) { ... }
+          - pattern: |
+              if ($SINK.indexOf('/') === 0) { ... }
+          - patterns:
+              - pattern-inside: |
+                  $URL_OBJ = new URL($SINK);
+                  ...
+                  if ($URL_OBJ.protocol === 'https:' || $URL_OBJ.protocol === 'http:') { ... }
+              - pattern: $SINK
+
+  - id: react-next-searchparams-xss-taint
+    mode: taint
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Next.js XSS: Untrusted user input from URL parameters (searchParams, query) 
+      reaches 'dangerouslySetInnerHTML' without sanitization. This leads to XSS 
+      during Server-Side Rendering (SSR) or on the client.
+    options:
+      interfile: true
+      taint_assume_safe_indexes: true
+    pattern-sources: *react_sources
+    pattern-propagators: *js_propagators
+    pattern-sinks:
+      - pattern-either:
+          - pattern: |
+              <$_ dangerouslySetInnerHTML={{ __html: $SINK }} ... />
+          - pattern: |
+              <$_ dangerouslySetInnerHTML={{ "__html": $SINK }} ... />
+          - pattern: |
+              <$_ dangerouslySetInnerHTML={{ '__html': $SINK }} ... />
+          - pattern: |
+              React.createElement($TAG, { ..., dangerouslySetInnerHTML: { __html: $SINK }, ... }, ...)
+          - patterns:
+              - pattern-inside: |
+                  $OBJ = { __html: $SINK };
+                  ...
+              - pattern: <$_ dangerouslySetInnerHTML={$OBJ} ... />
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: DOMPurify.sanitize(...)
+          - pattern: sanitizeHtml(...)
+          - pattern: parseInt(...)
+          - pattern: parseFloat(...)
+          - pattern: Number(...)
+          - pattern: |
+              if (typeof $SINK === 'number') { ... }
 
   # --- Angular ---
 
   - id: angular-insecure-html-injection-template
     languages: [html]
     severity: WARNING
-    message: "Binding to [innerHTML] or [outerHTML] creates an XSS vulnerability."
-    patterns:
-      - pattern-either:
-          - pattern: '[innerHTML]="$VALUE"'
-          - pattern: '[outerHTML]="$VALUE"'
+    message: >-
+      Angular Security Warning: Binding to [innerHTML] or [outerHTML] detected. 
+      While Angular sanitizes these bindings by default, if the input is explicitly marked 
+      as trusted elsewhere (bypassSecurityTrustHtml), it will execute malicious scripts. 
+      Ensure the bound value is strictly controlled.
+    pattern-regex: '(?i)(?:\[innerHTML\]|\[outerHTML\]|bind-innerHTML|bind-outerHTML|innerHTML|outerHTML)\s*=\s*["''][^"''\>]*["'']'
 
-  - id: angular-insecure-bypass-security
-    languages: [typescript]
+  - id: angular-insecure-elementref-bypass-taint
+    mode: taint
+    languages: [javascript, typescript]
     severity: ERROR
-    message: "Bypassing Angular's sanitizer allows XSS. Review carefully."
+    message: >-
+      Angular XSS: Using ElementRef.nativeElement or Renderer2 to directly set innerHTML 
+      bypasses Angular's built-in DomSanitizer. If the assigned data is user-controlled, 
+      this leads directly to DOM XSS. Always sanitize untrusted data with DOMPurify.
+    options:
+      interfile: true
+      taint_assume_safe_indexes: true
+    pattern-sources: *angular_sources
+    pattern-propagators: *js_propagators
+    pattern-sinks:
+      - pattern-either:
+          - pattern: $REF.nativeElement.innerHTML = $SINK
+          - pattern: $REF.nativeElement.outerHTML = $SINK
+          - patterns:
+              - pattern: $REF.nativeElement.insertAdjacentHTML($POS, $SINK)
+              - focus-metavariable: $SINK
+          - patterns:
+              - pattern: |
+                  $RENDERER.setProperty($EL, 'innerHTML', $SINK)
+              - focus-metavariable: $SINK
+          - patterns:
+              - pattern: |
+                  $RENDERER.setProperty($EL, "innerHTML", $SINK)
+              - focus-metavariable: $SINK
+          - patterns:
+              - pattern: |
+                  $RENDERER.setProperty($EL, 'outerHTML', $SINK)
+              - focus-metavariable: $SINK
+          - patterns:
+              - pattern: |
+                  $RENDERER.setProperty($EL, "outerHTML", $SINK)
+              - focus-metavariable: $SINK
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: DOMPurify.sanitize(...)
+          - pattern: sanitizeHtml(...)
+          - pattern: parseInt(...)
+          - pattern: parseFloat(...)
+          - pattern: Number(...)
+          - pattern: Boolean(...)
+          - pattern: |
+              if (typeof $SINK === 'number') { ... }
+          - pattern: |
+              if (typeof $SINK === 'boolean') { ... }
+
+  - id: angular-insecure-bypass-security-taint
+    mode: taint
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Angular XSS: Bypassing Angular's DomSanitizer explicitly disables built-in XSS protection. 
+      Methods like bypassSecurityTrustHtml tell Angular to trust the provided string blindly. 
+      If user input reaches these methods without strict sanitization, it leads to XSS.
+    options:
+      interfile: true
+      taint_assume_safe_indexes: true
+    pattern-sources: *angular_sources
+    pattern-propagators: *js_propagators
+    pattern-sinks:
+      - pattern-either:
+          - pattern: $SAN.bypassSecurityTrustHtml($SINK)
+          - pattern: $SAN.bypassSecurityTrustScript($SINK)
+          - pattern: $SAN.bypassSecurityTrustUrl($SINK)
+          - pattern: $SAN.bypassSecurityTrustResourceUrl($SINK)
+          - pattern: $SAN.bypassSecurityTrustStyle($SINK)
+          - pattern: this.$SAN.bypassSecurityTrustHtml($SINK)
+          - pattern: this.$SAN.bypassSecurityTrustScript($SINK)
+          - pattern: this.$SAN.bypassSecurityTrustUrl($SINK)
+          - pattern: this.$SAN.bypassSecurityTrustResourceUrl($SINK)
+          - pattern: this.$SAN.bypassSecurityTrustStyle($SINK)
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: DOMPurify.sanitize(...)
+          - pattern: sanitizeHtml(...)
+          - pattern: parseInt(...)
+          - pattern: parseFloat(...)
+          - pattern: Number(...)
+          - pattern: Boolean(...)
+          - pattern: |
+              if (typeof $SINK === 'number') { ... }
+          - pattern: |
+              if (typeof $SINK === 'boolean') { ... }
+
+  - id: angular-hostbinding-innerhtml
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      Angular Security Warning: Using @HostBinding to bind to innerHTML or outerHTML 
+      can introduce XSS vulnerabilities if explicitly trusted HTML is passed to it. 
+      Verify that the data bound to this property is strictly controlled.
     patterns:
       - pattern-either:
-          - pattern: $SAN.bypassSecurityTrustHtml(...)
-          - pattern: $SAN.bypassSecurityTrustScript(...)
-          - pattern: $SAN.bypassSecurityTrustUrl(...)
-          - pattern: $SAN.bypassSecurityTrustResourceUrl(...)
+          - pattern: |
+              @HostBinding('innerHTML')
+              $PROP
+          - pattern: |
+              @HostBinding("innerHTML")
+              $PROP
+          - pattern: |
+              @HostBinding('outerHTML')
+              $PROP
+          - pattern: |
+              @HostBinding("outerHTML")
+              $PROP
 
   # --- Vue ---
 
-  - id: vue-insecure-html-injection
-    languages: [html]
-    severity: WARNING
-    message: "Use of v-html creates an XSS vulnerability."
-    patterns:
-      - pattern: v-html="$VALUE"
-
-  - id: vue-insecure-html-injection-domprops
+  - id: vue-insecure-html-injection-taint
+    mode: taint
     languages: [javascript, typescript]
-    severity: WARNING
-    message: "Directly setting innerHTML via domProps in Vue render functions."
-    patterns:
-      - pattern: |
-          domProps: { ..., innerHTML: $VALUE, ... }
+    severity: ERROR
+    message: >-
+      Vue XSS: Untrusted data is flowing into the 'domProps.innerHTML' 
+      in a render function. Vue intentionally does not escape HTML inserted this way. 
+      Ensure the data is sanitized using DOMPurify before rendering.
+    options:
+      interfile: true
+      taint_assume_safe_indexes: true
+    pattern-sources: *vue_sources
+    pattern-propagators: *js_propagators
+    pattern-sinks:
+      - pattern-either:
+          - pattern: |
+              domProps: { ..., innerHTML: $SINK, ... }
+          - pattern: |
+              domProps: { ..., "innerHTML": $SINK, ... }
+          - pattern: |
+              domProps: { ..., 'innerHTML': $SINK, ... }
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: DOMPurify.sanitize(...)
+          - pattern: sanitizeHtml(...)
+          - pattern: parseInt(...)
+          - pattern: parseFloat(...)
+          - pattern: Number(...)
+          - pattern: Boolean(...)
+          - pattern: |
+              if (typeof $SINK === 'number') { ... }
+          - pattern: |
+              if (typeof $SINK === 'boolean') { ... }
 
   - id: vue-insecure-javascript-url
     languages: [html]
     severity: ERROR
-    message: "Dynamic binding of 'javascript:' to href allows XSS."
-    patterns:
-      - pattern-either:
-          - pattern: ':href="''javascript:'' + $VAL"'
-          - pattern: 'v-bind:href="''javascript:'' + $VAL"'
+    message: >-
+      Vue XSS: Dynamic binding of 'javascript:' URI to href allows Cross-Site Scripting. 
+      Refactor to use Vue event handlers (e.g., @click) instead of javascript URIs.
+    pattern-regex: '(?i)(?::href|v-bind:href)\s*=\s*["''][^"''\>]*javascript:[^"''\>]*["'']'
 
   # --- Svelte ---
 
-  - id: svelte-insecure-html-injection
+  - id: svelte-insecure-html-injection-route
     languages: [html]
-    severity: WARNING
-    message: "{@html ...} tag bypasses Svelte's auto-escaping, leading to XSS."
-    pattern-regex: '\{@html\s+[^}]+\}'
+    severity: ERROR
+    message: >-
+      Svelte XSS: Untrusted user input from SvelteKit's page store ($page.url) or 
+      window.location is passed directly to '{@html ...}'. This completely bypasses 
+      Svelte's auto-escaping. Ensure data is sanitized before rendering.
+    pattern-regex: '\{@html\s+[^}]*(?:\$page\.url|\$page\.query|\$page\.params|window\.location|searchParams)[^}]*\}'
 
   # ==============================================================================
   # 2. Паттерны, связанные с небезопасной логикой рендеринга и работой с DOM
@@ -106,217 +588,231 @@ rules:
 
   # --- DOM API (General JS) ---
 
-  - id: dom-insecure-code-execution-eval
+  - id: dom-insecure-code-execution-eval-taint
+    mode: taint
     languages: [javascript, typescript]
     severity: ERROR
-    message: "Use of eval() or new Function() allows arbitrary code execution."
-    patterns:
+    message: >-
+      Code Execution (RCE): Untrusted user input reaches eval(), new Function(), 
+      setTimeout(), or setInterval(). This allows an attacker to execute arbitrary JavaScript 
+      in the context of the application.
+    options:
+      interfile: true
+      taint_assume_safe_indexes: true
+    pattern-sources: *js_sources
+    pattern-propagators: *js_propagators
+    pattern-sinks:
       - pattern-either:
-          - pattern: eval(...)
-          - pattern: new Function(...)
-          - pattern: setTimeout("$CODE", $TIME)
-
-  - id: dom-insecure-dom-clobbering
-    languages: [javascript, typescript]
-    severity: INFO
-    message: "Accessing window/document properties dynamically can lead to DOM Clobbering attacks."
-    patterns:
+          - pattern: eval($SINK)
+          - pattern: window.eval($SINK)
+          - pattern: new Function(..., $SINK)
+          - pattern: setTimeout($SINK, ...)
+          - pattern: setInterval($SINK, ...)
+          - pattern: setTimeout(`...${$SINK}...`)
+          - pattern: setInterval(`...${$SINK}...`)
+          - pattern: setTimeout("..." + $SINK, ...)
+          - pattern: setInterval("..." + $SINK, ...)
+    pattern-sanitizers:
       - pattern-either:
-          - pattern: window[$VAR]
-          - pattern: document[$VAR]
-          - pattern: document.forms[$VAR]
+          - pattern: parseInt(...)
+          - pattern: parseFloat(...)
+          - pattern: Number(...)
+          - pattern: |
+              if (typeof $SINK === 'number') { ... }
 
   # --- React ---
 
-  - id: react-finddomnode-usage
-    languages: [javascript, typescript]
-    severity: WARNING
-    message: "ReactDOM.findDOMNode is deprecated and bypasses React encapsulation."
-    patterns:
-      - pattern: ReactDOM.findDOMNode(...)
-
-  - id: react-component-inside-component
-    languages: [javascript, typescript]
-    severity: WARNING
-    message: "Do not define components inside other components. It causes remounts on every render."
-    patterns:
-      - pattern: |
-          const $PARENT = (...) => {
-            ...
-            const $CHILD = (...) => { ... return <$TAG ... /> }
-            ...
-          }
-      - pattern-not: |
-          const $PARENT = (...) => {
-            ...
-            const $CHILD = (...) => { ... return ... }
-            ...
-          }
-
-  - id: react-hooks-conditional
+  - id: react-next-server-action-missing-auth
     languages: [javascript, typescript]
     severity: ERROR
-    message: "React Hooks must be called unconditionally (not inside loops or if-statements)."
+    message: >-
+      Access Control: Next.js Server Action performs database operations without 
+      an explicit authentication or session check. Attackers can invoke this public 
+      endpoint directly to bypass UI restrictions. Add auth/session validation.
     patterns:
-      - pattern: |
-          function $COMPONENT(...) {
-            $BODY
-          }
-      - pattern-regex: 'if\s*\(.*\)\s*\{\s*use(State|Effect)\('
-
-  # --- Angular ---
-
-  - id: angular-performance-function-in-template
-    languages: [html]
-    severity: INFO
-    message: "Function calls in templates are executed on every change detection cycle. Use pure pipes or computed values."
-    patterns:
-      - pattern-regex: '\{\{\s*[a-zA-Z0-9_]+\(.*\)\s*\}\}'
+      - pattern-either:
+          - pattern-inside: |
+              async function $ACTION(...) {
+                "use server";
+                ...
+              }
+          - pattern-inside: |
+              export const $ACTION = async (...) => {
+                "use server";
+                ...
+              }
+          - pattern-inside: |
+              "use server";
+              ...
+              export async function $ACTION(...) { ... }
+          - pattern-inside: |
+              "use server";
+              ...
+              export const $ACTION = async (...) => { ... }
+      - pattern-either:
+          - pattern: <... $DB.$MODEL.find(...) ...>
+          - pattern: <... $DB.$MODEL.create(...) ...>
+          - pattern: <... $DB.$MODEL.delete(...) ...>
+          - pattern: <... $DB.$MODEL.update(...) ...>
+          - pattern: <... $DB.$MODEL.upsert(...) ...>
+          - pattern: <... sql`...` ...>
+          - pattern: <... db.query(...) ...>
+          - pattern: prisma.$MODEL.create(...)
+          - pattern: prisma.$MODEL.update(...)
+          - pattern: prisma.$MODEL.delete(...)
+      - pattern-not: <... auth(...) ...>
+      - pattern-not: <... getSession(...) ...>
+      - pattern-not: <... verifyToken(...) ...>
+      - pattern-not: <... currentUser(...) ...>
+      - pattern-not: <... requireAuth(...) ...>
+      - pattern-not: <... checkAuth(...) ...>
+      - pattern-not: <... session.user ...>
 
   # --- Vue ---
 
-  - id: vue-insecure-dynamic-component
+  - id: vue-insecure-dynamic-component-route
     languages: [html]
-    severity: INFO
-    message: "Dynamic component rendering with :is needs validation of the component name."
+    severity: ERROR
+    message: >-
+      Vue Component Injection: Untrusted data from Vue Router is passed directly 
+      to a dynamic component '<component :is="...">'. An attacker can manipulate the URL 
+      to render unintended global components or bypass logic. Ensure validation against an allowlist.
     patterns:
-      - pattern: '<component :is="$VALUE" ... />'
-
-  - id: vue-no-v-if-with-v-for
-    languages: [html]
-    severity: WARNING
-    message: "Do not use v-if and v-for on the same element. It causes logic errors and performance issues."
-    patterns:
-      - pattern: '<$TAG ... v-if="$COND" ... v-for="$ITEM in $LIST" ...>'
-
-  - id: vue-no-v-for-without-key
-    languages: [html]
-    severity: WARNING
-    message: "v-for requires a :key attribute to maintain component state and performance."
-    patterns:
-      - pattern: '<$TAG ... v-for="$ITEM in $LIST" ...>'
-      - pattern-not: '<$TAG ... :key="$KEY" ...>'
-      - pattern-not: '<$TAG ... v-bind:key="$KEY" ...>'
-
-  # --- Svelte ---
-
-  - id: svelte-insecure-dynamic-component
-    languages: [html]
-    severity: INFO
-    message: "Dynamic <svelte:component> with user input can lead to unexpected behavior."
-    patterns:
-      - pattern: '<svelte:component this={$VALUE} ... />'
+      - pattern-either:
+          - pattern: <component :is="$VAL" ... />
+          - pattern: <component :is="$VAL" ... >
+          - pattern: <component v-bind:is="$VAL" ... />
+          - pattern: <component v-bind:is="$VAL" ... >
+      - metavariable-regex:
+          metavariable: $VAL
+          regex: '.*(\$route\.query|\$route\.params|\$route\.hash|window\.location).*'
 
   # ==============================================================================
   # 3. Паттерны, связанные с управлением состоянием и некорректной работой с данными
   # ==============================================================================
 
-  # --- DOM API (General JS) ---
-
-  - id: dom-insecure-storage-sensitive-data
-    languages: [javascript, typescript]
-    severity: WARNING
-    message: "Potential storage of sensitive data (token, password, key) in localStorage/sessionStorage."
-    patterns:
-      - pattern-either:
-          - pattern: localStorage.setItem($KEY, ...)
-          - pattern: sessionStorage.setItem($KEY, ...)
-      - metavariable-regex:
-          metavariable: $KEY
-          regex: "(?i).*(token|auth|password|secret|key).*"
-
-  - id: dom-hardcoded-secrets
-    languages: [javascript, typescript]
-    severity: ERROR
-    message: "Possible hardcoded secret (API key or token) detected."
-    patterns:
-      - pattern-regex: "(?i)(api_key|auth_token|client_secret|access_token)\\s*[:=]\\s*['\"][a-zA-Z0-9_\\-]{20,}['\"]"
-
   # --- React ---
 
-  - id: react-insecure-sensitive-state
-    languages: [javascript, typescript]
-    severity: INFO
-    message: "Storing sensitive data in component state. Ensure it is cleared on unmount."
-    patterns:
-      - pattern: useState($VAL)
-      - metavariable-regex:
-          metavariable: $VAL
-          regex: ".*(token|password).*"
-
-  - id: react-props-in-initial-state
-    languages: [javascript, typescript]
-    severity: INFO
-    message: "Initializing state from props ignores prop updates. Use useEffect or derive state during render."
-    patterns:
-      - pattern-either:
-          - pattern: useState(props.$VAL)
-          - pattern: useState($PROPS.$VAL)
-
-  - id: react-useeffect-missing-deps
+  - id: react-hooks-missing-deps
     languages: [javascript, typescript]
     severity: WARNING
-    message: "useEffect without a dependency array runs on every render. This can cause performance issues or infinite loops."
+    message: >-
+      Performance/Logic: React hook (useEffect, useCallback, useMemo) is called without 
+      a dependency array. This causes the hook to run on every single render, potentially 
+      leading to severe performance degradation or infinite loops.
     patterns:
-      - pattern: useEffect(...)
-      - pattern-not: useEffect(..., [...])
-      - pattern-not: useEffect(..., $ANY)
+      - pattern-either:
+          - pattern: useEffect($CALLBACK)
+          - pattern: useCallback($CALLBACK)
+          - pattern: useMemo($CALLBACK)
+          - pattern: useEffect($CALLBACK, undefined)
+          - pattern: useCallback($CALLBACK, undefined)
+          - pattern: useMemo($CALLBACK, null)
+      - pattern-not: useEffect($CALLBACK, [...])
+      - pattern-not: useEffect($CALLBACK, $ANY)
+      - pattern-not: useCallback($CALLBACK, [...])
+      - pattern-not: useCallback($CALLBACK, $ANY)
+      - pattern-not: useMemo($CALLBACK, [...])
+      - pattern-not: useMemo($CALLBACK, $ANY)
+
+  - id: react-next-data-overfetching-leak-taint
+    mode: taint
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Data Leak: Returning raw ORM/DB objects directly from getServerSideProps or 
+      getStaticProps in Next.js can leak highly sensitive hidden fields (passwords, tokens) 
+      to the client's HTML payload. Map the object to a safe DTO before returning.
+    options:
+      interfile: true
+      taint_assume_safe_indexes: true
+    pattern-sources:
+      - pattern-either:
+          - pattern: $DB.findUnique(...)
+          - pattern: $DB.findMany(...)
+          - pattern: $DB.findFirst(...)
+          - pattern: $DB.query(...)
+          - pattern: $DB.select(...)
+          - pattern: $MODEL.findOne(...)
+          - pattern: $MODEL.findAll(...)
+          - pattern: $MODEL.find(...)
+    pattern-propagators: *js_propagators
+    pattern-sinks:
+      - patterns:
+          - pattern-inside: |
+              export async function getServerSideProps(...) { ... }
+          - pattern: |
+              return { props: $SINK }
+      - patterns:
+          - pattern-inside: |
+              export async function getStaticProps(...) { ... }
+          - pattern: |
+              return { props: $SINK }
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: $X.map(...)
+          - pattern: |
+              { name: $SINK.name, email: $SINK.email }
+          - pattern: |
+              $DB.findUnique({ select: ... })
+          - pattern: |
+              $DB.findMany({ select: ... })
 
   # --- Angular ---
 
   - id: angular-nested-subscribe
-    languages: [typescript]
-    severity: WARNING
-    message: "Nested subscribe() calls lead to memory leaks and unmanageable code. Use switchMap/mergeMap instead."
-    patterns:
-      - pattern: |
-          $OBS1.subscribe(..., () => {
-            ...
-            $OBS2.subscribe(...)
-            ...
-          })
-
-  # --- Vue ---
-
-  - id: vue-insecure-strict-mode-off
     languages: [javascript, typescript]
     severity: WARNING
-    message: "Vuex store initialized without strict mode. State mutations outside mutations handlers allowed."
+    message: >-
+      Performance/Logic: Nested subscribe() calls detected. This leads to callback hell, 
+      unmanageable race conditions, and memory leaks if not unsubscribed properly. 
+      Refactor using RxJS mapping operators (switchMap, mergeMap).
     patterns:
-      - pattern: "new Vuex.Store({ ..., strict: false, ... })"
-
-  - id: vue-no-prop-mutation
-    languages: [javascript, typescript, html]
-    severity: WARNING
-    message: "Avoid mutating props directly. Use data or computed properties instead."
-    patterns:
-      - pattern: "this.$props.$VAL = $NEWVAL"
+      - pattern-either:
+          - pattern: |
+              $OBS1.subscribe(..., () => {
+                <... $OBS2.subscribe(...) ...>
+              })
+          - pattern: |
+              $OBS1.subscribe(..., ($DATA) => {
+                <... $OBS2.subscribe(...) ...>
+              })
+          - pattern: |
+              $OBS1.subscribe(function(...) {
+                <... $OBS2.subscribe(...) ...>
+              })
+          - pattern: |
+              $OBS1.subscribe({
+                next: (...) => { <... $OBS2.subscribe(...) ...> }
+              })
+          - pattern: |
+              $OBS1.subscribe({
+                next(...) { <... $OBS2.subscribe(...) ...> }
+              })
 
   # --- Svelte ---
 
-  - id: svelte-shared-state-ssr
-    languages: [html]
-    severity: ERROR
-    message: "Variables in <script context='module'> are shared between all requests on the server (Data Leak). Move state to normal <script>."
-    patterns:
-      - pattern: |
-          <script context="module">
-            ...
-            let $VAR = ...;
-            ...
-          </script>
-      - pattern-not: |
-          <script context="module">
-            ...
-            const $VAR = ...; # Const is safe
-            ...
-          </script>
-
   - id: svelte-store-mutation-in-subscribe
-    languages: [javascript, typescript, html]
+    languages: [javascript, typescript]
     severity: WARNING
-    message: "Updating a store inside a subscribe callback is an anti-pattern. Use derived stores instead."
-    pattern-regex: '\.subscribe\s*\(\s*\$[A-Z]+\s*=>.*\$[A-Z]+\.set\s*\('
+    message: >-
+      Performance/Logic: Mutating a Svelte store (.set() or .update()) inside a 
+      .subscribe() callback is an anti-pattern. This can easily trigger infinite loops. 
+      Use derived stores instead to compute state based on other stores.
+    patterns:
+      - pattern-either:
+          - pattern: |
+              $STORE1.subscribe((...) => {
+                <... $STORE2.set(...) ...>
+              })
+          - pattern: |
+              $STORE1.subscribe((...) => {
+                <... $STORE2.update(...) ...>
+              })
+          - pattern: |
+              $STORE1.subscribe(function(...) {
+                <... $STORE2.set(...) ...>
+              })
 
   # ==============================================================================
   # 4. Паттерны, связанные с небезопасной маршрутизацией
@@ -324,51 +820,152 @@ rules:
 
   # --- DOM API (General JS) ---
 
-  - id: dom-open-redirect
+  - id: dom-open-redirect-taint
+    mode: taint
     languages: [javascript, typescript]
-    severity: WARNING
-    message: "Potential Open Redirect vulnerability. Validating input before assignment is required."
-    patterns:
+    severity: ERROR
+    message: >-
+      Open Redirect: Untrusted user input dictates page navigation. An attacker can 
+      manipulate the URL to redirect victims to a malicious site. Ensure the target URL 
+      is strictly validated or constrained to relative paths.
+    options:
+      interfile: true
+      taint_assume_safe_indexes: true
+    pattern-sources: *js_sources
+    pattern-propagators: *js_propagators
+    pattern-sinks:
       - pattern-either:
-          - pattern: window.location = $VAL
-          - pattern: window.location.href = $VAL
-          - pattern: window.location.assign($VAL)
-          - pattern: window.location.replace($VAL)
-      - pattern-not: window.location = "..."
+          - pattern: window.location = $SINK
+          - pattern: window.location.href = $SINK
+          - pattern: window.location.assign($SINK)
+          - pattern: window.location.replace($SINK)
+          - pattern: window.open($SINK, ...)
+    pattern-sanitizers:
+      - pattern-either:
+          - patterns:
+              - pattern-inside: |
+                  if ($SINK.startsWith('/') && !$SINK.startsWith('//')) { ... }
+              - pattern: $SINK
+          - pattern: |
+              if ($SINK.startsWith('/')) { ... }
+          - pattern: |
+              if ($SINK.startsWith('./')) { ... }
+          - pattern: |
+              if ($SINK.indexOf('/') === 0) { ... }
+          - pattern: |
+              if ($SINK.startsWith(window.location.origin)) { ... }
 
-  # --- React ---
-
-  - id: react-reverse-tabnabbing
+  - id: dom-ssr-host-header-ssrf-taint
+    mode: taint
     languages: [javascript, typescript]
-    severity: WARNING
-    message: "Target='_blank' without rel='noopener noreferrer' allows Reverse Tabnabbing attacks."
-    patterns:
-      - pattern: <a target="_blank" />
-      - pattern-not: <a rel="noopener noreferrer" />
-      - pattern-not: <a rel="noreferrer noopener" />
+    severity: ERROR
+    message: >-
+      SSRF: DOM-based application trusts the incoming HTTP 'Host' 
+      or 'X-Forwarded-Host' header to construct internal API requests. Attackers 
+      can spoof this header to route internal traffic. Hardcode the API domain.
+    options:
+      interfile: true
+      taint_assume_safe_indexes: true
+    pattern-sources:
+      - pattern-either:
+          - pattern: $REQ.headers.host
+          - pattern: $REQ.headers['host']
+          - pattern: $REQ.headers['x-forwarded-host']
+          - pattern: $REQ.headers.get('host')
+          - pattern: $REQ.headers.get('x-forwarded-host')
+    pattern-propagators: *js_propagators
+    pattern-sinks:
+      - pattern-either:
+          - pattern: fetch($SINK, ...)
+          - pattern: $HTTP.get($SINK, ...)
+          - pattern: $HTTP.post($SINK, ...)
+          - pattern: $HTTP.put($SINK, ...)
+          - pattern: $HTTP.delete($SINK, ...)
+          - pattern: $HTTP.request(..., $SINK, ...)
+          - pattern: $axios.get($SINK)
+          - pattern: $axios.post($SINK)
 
   # --- Vue ---
 
-  - id: vue-reverse-tabnabbing
-    languages: [html]
-    severity: WARNING
-    message: "Links with target='_blank' must have rel='noopener noreferrer' to prevent Tabnabbing."
-    patterns:
+  - id: vue-router-redirect-taint
+    mode: taint
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Open Redirect: Untrusted data is passed to Vue routing functions (push/replace). 
+      This can lead to phishing attacks. Validate that the URL is a relative path.
+    options:
+      interfile: true
+      taint_assume_safe_indexes: true
+    pattern-sources: *vue_sources
+    pattern-propagators: *js_propagators
+    pattern-sinks:
       - pattern-either:
-          - pattern: '<a ... target="_blank" ...>'
-          - pattern: '<a ... :target="''_blank''" ...>'
-      - pattern-not: '<a ... rel="noopener noreferrer" ...>'
-      - pattern-not: '<a ... rel="noreferrer noopener" ...>'
+          - pattern: this.$router.push($SINK)
+          - pattern: this.$router.replace($SINK)
+          - pattern: router.push($SINK)
+          - pattern: router.replace($SINK)
+          - pattern: useRouter().push($SINK)
+          - pattern: useRouter().replace($SINK)
+          - pattern: |
+              this.$router.push({ path: $SINK, ... })
+          - pattern: |
+              this.$router.replace({ path: $SINK, ... })
+          - pattern: |
+              useRouter().push({ path: $SINK, ... })
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: |
+              if ($SINK.startsWith('/')) { ... }
+
+  - id: vue-nuxt-ssrf-taint
+    mode: taint
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      SSRF: Untrusted user input from the request or route is used to construct 
+      a backend API call using $fetch or useFetch in Nuxt. An attacker can force 
+      the server to scan internal networks. Validate the URL schema.
+    options:
+      interfile: true
+      taint_assume_safe_indexes: true
+    pattern-sources: *vue_sources
+    pattern-propagators: *js_propagators
+    pattern-sinks:
+      - pattern-either:
+          - pattern: $fetch($SINK, ...)
+          - pattern: useFetch($SINK, ...)
+          - pattern: useAsyncData(..., () => $fetch($SINK, ...))
+          - pattern: $axios.get($SINK)
+          - pattern: $axios.post($SINK)
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: |
+              if ($SINK.startsWith('/')) { ... }
 
   # --- Angular ---
 
-  - id: angular-router-redirect
-    languages: [typescript]
-    severity: WARNING
-    message: "Dynamic navigation using Router. Validate the target URL."
-    patterns:
-      - pattern: $ROUTER.navigateByUrl($VAL)
-      - pattern-not: $ROUTER.navigateByUrl("...")
+  - id: angular-router-redirect-taint
+    mode: taint
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Open Redirect: Untrusted data is used dynamically in Angular navigateByUrl() 
+      or navigate(). Ensure the target is validated against an allowlist or restricted 
+      to safe local paths.
+    options:
+      interfile: true
+      taint_assume_safe_indexes: true
+    pattern-sources: *angular_sources
+    pattern-propagators: *js_propagators
+    pattern-sinks:
+      - pattern-either:
+          - pattern: $ROUTER.navigateByUrl($SINK)
+          - pattern: $ROUTER.navigate([..., $SINK, ...])
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: |
+              if ($SINK.startsWith('/')) { ... }
 
   # ==============================================================================
   # 5. Паттерны, связанные с использованием глобальных переменных
@@ -376,15 +973,51 @@ rules:
 
   # --- Global Scope Pollution ---
 
-  - id: dom-prototype-pollution-assignment
+  - id: dom-prototype-pollution-assignment-taint
+    mode: taint
     languages: [javascript, typescript]
     severity: ERROR
-    message: "Potential Prototype Pollution assignment detected."
-    patterns:
+    message: >-
+      Prototype Pollution: Untrusted data is used to dynamically construct object properties. 
+      An attacker can inject '__proto__' to manipulate the global object prototype, 
+      leading to XSS, RCE, or logic bypass. Avoid dynamic keys.
+    options:
+      interfile: true
+      taint_assume_safe_indexes: true
+    pattern-sources: *js_sources
+    pattern-propagators: *js_propagators
+    pattern-sinks:
       - pattern-either:
-          - pattern: $OBJ['__proto__'] = ...
-          - pattern: $OBJ.__proto__ = ...
-          - pattern: $OBJ.constructor.prototype = ...
+          - pattern: $OBJ['__proto__'] = $SINK
+          - pattern: $OBJ.__proto__ = $SINK
+          - pattern: $OBJ.constructor.prototype = $SINK
+          - pattern: $OBJ[$SINK][$KEY] = $VAL
+          - pattern: $OBJ[$KEY][$SINK] = $VAL
+          - pattern: Object.assign($OBJ, $SINK)
+          - pattern: _.assign($OBJ, $SINK)
+
+  - id: dom-merge-prototype-pollution-taint
+    mode: taint
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Prototype Pollution: Untrusted JSON payload is passed directly to a recursive 
+      merge function. If the payload contains '__proto__', it will pollute the global 
+      Object prototype. Use safe merge libraries or validate the payload.
+    options:
+      interfile: true
+      taint_assume_safe_indexes: true
+    pattern-sources: *js_sources
+    pattern-propagators: *js_propagators
+    pattern-sinks:
+      - pattern-either:
+          - pattern: merge($TARGET, $SINK, ...)
+          - pattern: deepmerge($TARGET, $SINK, ...)
+          - pattern: _.merge($TARGET, $SINK, ...)
+          - pattern: _.mergeWith($TARGET, $SINK, ...)
+          - pattern: _.defaultsDeep($TARGET, $SINK, ...)
+          - pattern: deepExtend($TARGET, $SINK)
+          - pattern: extend(true, $TARGET, $SINK)
 
   # ==============================================================================
   # 6. Паттерны, связанные с использованием внешних библиотек
@@ -394,7 +1027,52 @@ rules:
 
   - id: lodash-insecure-template
     languages: [javascript, typescript]
-    severity: WARNING
-    message: "Lodash template() allows arbitrary code execution via the 'variable' option."
+    severity: ERROR
+    message: >-
+      Code Execution (RCE) / XSS: Lodash's _.template() function allows arbitrary 
+      code execution when the 'variable' option is combined with untrusted template strings. 
+      Avoid dynamically generating templates from user input.
     patterns:
-      - pattern: "_.template(..., { variable: ... })"
+      - pattern-either:
+          - pattern: |
+              _.template(..., { variable: ... })
+          - pattern: |
+              template(..., { variable: ... })
+
+  - id: lib-markdown-xss-taint
+    mode: taint
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Reflected XSS: Untrusted data is passed to a Markdown parser (marked, showdown). 
+      Most parsers do NOT sanitize HTML tags or 'javascript:' URIs by default. 
+      Wrap the output in DOMPurify before inserting into the DOM.
+    options:
+      interfile: true
+      taint_assume_safe_indexes: true
+    pattern-sources: *js_sources
+    pattern-propagators: *js_propagators
+    pattern-sinks:
+      - pattern-either:
+          - pattern: marked.parse($SINK)
+          - pattern: marked($SINK).toString()
+          - pattern: marked.parse($SINK, ...)
+          - pattern: marked($SINK)
+          - pattern: marked.parseInline($SINK)
+          - pattern: new showdown.Converter().makeHtml($SINK)
+          - patterns:
+              - pattern-inside: |
+                  $CONV = new showdown.Converter(...);
+                  ...
+              - pattern: $CONV.makeHtml($SINK)
+          - pattern: markdownit().render($SINK)
+          - pattern: markdownit().renderInline($SINK)
+          - patterns:
+              - pattern-inside: |
+                  $MD = markdownit(...);
+                  ...
+              - pattern: $MD.render($SINK)
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: DOMPurify.sanitize(...)
+          - pattern: sanitizeHtml(...)

@@ -11,7 +11,7 @@ MAX_STARS = 5000
 
 FRAMEWORKS = ["Angular", "React", "Vue", "Svelte"]
 YEAR_START = 2025
-YEAR_END = 2026
+YEAR_END = 2026 
 REPOS_PER_FRAMEWORK = 50
 
 HEADERS = {"Authorization": f"token {GITHUB_TOKEN}"}
@@ -36,7 +36,7 @@ def main():
             for repo in repos:
                 f.write(repo["clone_url"] + "\n")
 
-    print("Сбор ссылок завершен")
+    print("Script is finished")
 
 if __name__ == "__main__":
     main()

@@ -1,3 +1,8 @@
 repos/
 repos-test/
+repos-specific/
+reports/
+repos-specific2.txt
+repos-specific3.txt
+example.yaml
 .env
